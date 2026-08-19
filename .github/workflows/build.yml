@@ -28,7 +28,7 @@ jobs:
             | jq -r '.results[] | select(.name == "alpine") | .digest')
 
           # Get our image's digest of the base layer (stored as label)
-          OUR_DIGEST=$(curl -s "https://hub.docker.com/v2/repositories/bpopovych/caddy-cloudflare/tags/?page_size=10" \
+          OUR_DIGEST=$(curl -s "https://hub.docker.com/v2/repositories/bpopovych/caddy-cloudflare-l4/tags/?page_size=10" \
             | jq -r '.results[] | select(.name == "latest") | .digest' 2>/dev/null || echo "none")
 
           # Get latest caddy-dns/cloudflare module version
@@ -39,10 +39,15 @@ jobs:
               | jq -r '.[0].name // "unknown"')
           fi
 
+          # caddy-l4 has no tagged releases; report the default-branch commit that will be built
+          L4_COMMIT=$(curl -s "https://api.github.com/repos/mholt/caddy-l4/commits/master" \
+            | jq -r '.sha // "unknown"' | cut -c1-7)
+
           echo "Upstream caddy:alpine digest: ${UPSTREAM_DIGEST}"
           echo "Our image digest: ${OUR_DIGEST}"
           echo "Caddy version: ${CADDY_VERSION}"
           echo "Cloudflare module version: ${CF_VERSION}"
+          echo "caddy-l4 commit: ${L4_COMMIT}"
 
           # Always build on push/manual trigger; on schedule, build if digests differ or our image doesn't exist
           if [ "${{ github.event_name }}" != "schedule" ]; then
@@ -79,7 +84,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: bpopovych/caddy-cloudflare
+          images: bpopovych/caddy-cloudflare-l4
           tags: |
             type=raw,value=latest
             type=raw,value=${{ needs.check.outputs.caddy_version }}
@@ -92,7 +97,7 @@ jobs:
           platforms: linux/amd64,linux/arm64,linux/arm/v6,linux/arm/v7,linux/ppc64le,linux/riscv64,linux/s390x
           tags: ${{ steps.meta.outputs.tags }}
           labels: |
-            org.opencontainers.image.title=Caddy with Cloudflare DNS
-            org.opencontainers.image.description=Caddy web server with caddy-dns/cloudflare module for DNS-01 ACME validation
-            org.opencontainers.image.source=https://github.com/bpopovych/caddy-cloudflare
+            org.opencontainers.image.title=Caddy with Cloudflare DNS and Layer 4
+            org.opencontainers.image.description=Caddy web server with caddy-dns/cloudflare module for DNS-01 ACME validation and caddy-l4 for TCP/UDP proxying
+            org.opencontainers.image.source=https://github.com/bpopovych/caddy-cloudflare-l4
             org.opencontainers.image.version=${{ needs.check.outputs.caddy_version }}

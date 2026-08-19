@@ -1,6 +1,9 @@
-# caddy-cloudflare
+# caddy-cloudflare-l4
 
-Custom [Caddy](https://caddyserver.com/) Docker image with the [caddy-dns/cloudflare](https://github.com/caddy-dns/cloudflare) module for DNS-01 ACME challenge support.
+Custom [Caddy](https://caddyserver.com/) Docker image with:
+
+- [caddy-dns/cloudflare](https://github.com/caddy-dns/cloudflare) — DNS-01 ACME challenge support
+- [mholt/caddy-l4](https://github.com/mholt/caddy-l4) — layer 4 (TCP/UDP) proxying and protocol multiplexing
 
 Built automatically from the official `caddy:alpine` image for all upstream Linux platforms.
 
@@ -11,7 +14,7 @@ Built automatically from the official `caddy:alpine` image for all upstream Linu
 ## Usage
 
 ```bash
-docker pull bpopovych/caddy-cloudflare
+docker pull bpopovych/caddy-cloudflare-l4
 ```
 
 ### Docker Run
@@ -24,7 +27,7 @@ docker run -d \
   -v caddy_config:/config \
   -v $PWD/Caddyfile:/etc/caddy/Caddyfile \
   -e CF_API_TOKEN=your-cloudflare-api-token \
-  bpopovych/caddy-cloudflare
+  bpopovych/caddy-cloudflare-l4
 ```
 
 ### Docker Compose
@@ -32,7 +35,7 @@ docker run -d \
 ```yaml
 services:
   caddy:
-    image: bpopovych/caddy-cloudflare
+    image: bpopovych/caddy-cloudflare-l4
     restart: unless-stopped
     ports:
       - "80:80"
@@ -71,9 +74,70 @@ Create a token in the [Cloudflare dashboard](https://dash.cloudflare.com/profile
 
 Set the token as the `CF_API_TOKEN` environment variable.
 
+## Layer 4 Proxying
+
+`caddy-l4` is configured through the `layer4` block in the Caddyfile [global options](https://caddyserver.com/docs/caddyfile/options), which must come first in the file. Remember to publish any extra ports it listens on (`-p`/`ports:`).
+
+Plain TCP forwarding:
+
+```
+{
+    layer4 {
+        :5432 {
+            route {
+                proxy 10.0.0.5:5432
+            }
+        }
+    }
+}
+```
+
+Matching on the protocol, e.g. routing SSH and HTTPS off the same port:
+
+```
+{
+    layer4 {
+        :443 {
+            @ssh ssh
+            route @ssh {
+                proxy 10.0.0.5:22
+            }
+            route {
+                proxy 127.0.0.1:8443
+            }
+        }
+    }
+}
+```
+
+TLS termination in front of a plain backend, reusing Caddy's Cloudflare-issued certificate:
+
+```
+{
+    layer4 {
+        :9000 {
+            route {
+                tls
+                proxy 127.0.0.1:9001
+            }
+        }
+    }
+}
+
+example.com {
+    tls {
+        dns cloudflare {env.CF_API_TOKEN}
+    }
+}
+```
+
+See the [caddy-l4 README](https://github.com/mholt/caddy-l4#readme) for the full matcher and handler reference.
+
 ## Automatic Updates
 
 A GitHub Actions workflow runs daily to check for upstream changes to `caddy:alpine` and rebuilds the image when updates are detected. The image is also rebuilt on every push to `main`.
+
+`caddy-l4` has no tagged releases, so builds track the latest commit on its default branch.
 
 ## GitHub Actions Setup
 
