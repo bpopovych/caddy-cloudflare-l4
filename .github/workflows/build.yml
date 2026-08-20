@@ -17,31 +17,53 @@ jobs:
     steps:
       - name: Check upstream versions
         id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # The step runs under `bash -e`, so a rate-limited response that makes
+          # jq choke would fail the whole job. Both helpers fall back to an empty
+          # object, and every lookup below tolerates a missing value.
+          # GitHub calls are authenticated to avoid the 60/hour anonymous limit
+          # that runners share by IP.
+          gh_api() {
+            curl -sf -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" "$1" || echo '{}'
+          }
+          hub_api() {
+            curl -sf "$1" || echo '{}'
+          }
+
           # Get latest Caddy version from Docker Hub
-          CADDY_VERSION=$(curl -s "https://hub.docker.com/v2/repositories/library/caddy/tags/?page_size=100" \
-            | jq -r '.results[].name' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          CADDY_VERSION=$(hub_api "https://hub.docker.com/v2/repositories/library/caddy/tags/?page_size=100" \
+            | jq -r '(.results // [])[].name' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          if [ -z "$CADDY_VERSION" ]; then
+            echo "Could not determine the latest Caddy version; refusing to publish an image without a version tag." >&2
+            exit 1
+          fi
           echo "caddy_version=${CADDY_VERSION}" >> "$GITHUB_OUTPUT"
 
           # Get current caddy:alpine digest
-          UPSTREAM_DIGEST=$(curl -s "https://hub.docker.com/v2/repositories/library/caddy/tags/?page_size=100" \
-            | jq -r '.results[] | select(.name == "alpine") | .digest')
+          UPSTREAM_DIGEST=$(hub_api "https://hub.docker.com/v2/repositories/library/caddy/tags/?page_size=100" \
+            | jq -r '(.results // [])[] | select(.name == "alpine") | .digest')
 
           # Get our image's digest of the base layer (stored as label)
-          OUR_DIGEST=$(curl -s "https://hub.docker.com/v2/repositories/bpopovych/caddy-cloudflare-l4/tags/?page_size=10" \
-            | jq -r '.results[] | select(.name == "latest") | .digest' 2>/dev/null || echo "none")
+          OUR_DIGEST=$(hub_api "https://hub.docker.com/v2/repositories/bpopovych/caddy-cloudflare-l4/tags/?page_size=10" \
+            | jq -r '(.results // [])[] | select(.name == "latest") | .digest')
+          [ -n "$OUR_DIGEST" ] || OUR_DIGEST="none"
 
           # Get latest caddy-dns/cloudflare module version
-          CF_VERSION=$(curl -s "https://api.github.com/repos/caddy-dns/cloudflare/releases/latest" \
+          CF_VERSION=$(gh_api "https://api.github.com/repos/caddy-dns/cloudflare/releases/latest" \
             | jq -r '.tag_name // empty')
           if [ -z "$CF_VERSION" ]; then
-            CF_VERSION=$(curl -s "https://api.github.com/repos/caddy-dns/cloudflare/tags" \
-              | jq -r '.[0].name // "unknown"')
+            CF_VERSION=$(gh_api "https://api.github.com/repos/caddy-dns/cloudflare/tags" \
+              | jq -r 'if type == "array" then (.[0].name // empty) else empty end')
           fi
+          [ -n "$CF_VERSION" ] || CF_VERSION="unknown"
 
           # caddy-l4 has no tagged releases; report the default-branch commit that will be built
-          L4_COMMIT=$(curl -s "https://api.github.com/repos/mholt/caddy-l4/commits/master" \
-            | jq -r '.sha // "unknown"' | cut -c1-7)
+          L4_COMMIT=$(gh_api "https://api.github.com/repos/mholt/caddy-l4/commits/master" \
+            | jq -r '.sha // empty' | cut -c1-7)
+          [ -n "$L4_COMMIT" ] || L4_COMMIT="unknown"
 
           echo "Upstream caddy:alpine digest: ${UPSTREAM_DIGEST}"
           echo "Our image digest: ${OUR_DIGEST}"
